@@ -1,0 +1,89 @@
+import numpy as np
+from numpy.linalg import solve
+
+def u(x):
+    if isinstance(x, np.ndarray):
+        return x**3 * np.sin(np.pi * x)
+    return float(x)**3 * np.sin(np.pi * float(x))
+
+def gauss_quadrature_2pt(f, a, b):
+    x = np.array([-1/np.sqrt(3), 1/np.sqrt(3)])
+    w = np.array([1.0, 1.0])
+    
+    # Map to [a,b]
+    x_mapped = 0.5*(b-a)*x + 0.5*(a+b)
+    return 0.5*(b-a) * np.sum(w * np.array([f(xi) for xi in x_mapped]))
+
+def gauss_quadrature_3pt(f, a, b):
+    x = np.array([-np.sqrt(3/5), 0, np.sqrt(3/5)])
+    w = np.array([5/9, 8/9, 5/9])
+    
+    x_mapped = 0.5*(b-a)*x + 0.5*(a+b)
+    return 0.5*(b-a) * np.sum(w * np.array([f(xi) for xi in x_mapped]))
+
+def hat_function(x, xi_left, xi_mid, xi_right, h):
+    y = np.zeros_like(x, dtype=float)
+    mask1 = (xi_left <= x) & (x <= xi_mid)
+    mask2 = (xi_mid < x) & (x <= xi_right)
+    y[mask1] = (x[mask1] - xi_left) / h
+    y[mask2] = (xi_right - x[mask2]) / h
+    return y
+
+def solve_best_approximation(h, quadrature_method):
+    x = np.arange(0, 1 + h/2, h)  # Add h/2 to avoid floating point issues
+    N = len(x) - 1
+    A = np.zeros((N-1, N-1))
+    b = np.zeros(N-1)
+    
+    for i in range(N-1):
+        # Load vector computation
+        def f_load(t):
+            phi_i = hat_function(np.array([t]), x[i], x[i+1], x[i+2], h)
+            return u(t) * phi_i[0]
+        
+        b[i] = quadrature_method(f_load, x[i], x[i+2])
+        
+        # Stiffness matrix computation
+        for j in range(max(0, i-1), min(N-1, i+2)):
+            if abs(i-j) <= 1:
+                def f_stiff(t):
+                    phi_i = hat_function(np.array([t]), x[i], x[i+1], x[i+2], h)
+                    phi_j = hat_function(np.array([t]), x[j], x[j+1], x[j+2], h)
+                    return phi_i[0] * phi_j[0]
+                
+                A[i,j] = quadrature_method(f_stiff, max(x[i],x[j]), min(x[i+2],x[j+2]))
+    
+    coefficients = solve(A, b)
+    
+    def error_function(t):
+        approx = np.zeros_like(t, dtype=float)
+        for k in range(N-1):
+            phi_k = hat_function(t, x[k], x[k+1], x[k+2], h)
+            approx += coefficients[k] * phi_k
+        return (u(t) - approx)**2
+    
+    error = np.sqrt(quadrature_method(error_function, 0, 1))
+    return error
+
+h_values = [0.25, 0.125, 0.0625, 0.03125]
+methods = [gauss_quadrature_2pt, gauss_quadrature_3pt]
+method_names = ['2-point Gauss', '3-point Gauss']
+
+print("h      | 2-point Error  | 3-point Error")
+print("-" * 40)
+
+errors = {name: [] for name in method_names}
+
+for h in h_values:
+    print(f"{h:.4f} |", end=" ")
+    for method, name in zip(methods, method_names):
+        error = solve_best_approximation(h, method)
+        errors[name].append(error)
+        print(f"{error:.6e}  |", end=" ")
+    print()
+
+print("\nConvergence Rates:")
+for name in method_names:
+    rates = [np.log2(errors[name][i]/errors[name][i+1])/np.log2(h_values[i]/h_values[i+1])
+             for i in range(len(h_values)-1)]
+    print(f"{name}: {np.mean(rates):.4f}")
